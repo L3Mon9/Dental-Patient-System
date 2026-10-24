@@ -3,12 +3,15 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import { defineConfig } from 'vite'
 
+const apiProxy = { '/api': { target: process.env.DENTELLE_API_URL || 'http://127.0.0.1:3001', changeOrigin: false } }
+
 export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { '/api': { target: process.env.DENTELLE_API_URL || 'http://127.0.0.1:3001', changeOrigin: false } },
+    proxy: apiProxy,
   },
+  preview: { proxy: apiProxy },
   resolve: { alias: { events: 'events/', url: 'url/' } },
   optimizeDeps: {
     exclude: ['@cornerstonejs/dicom-image-loader'],

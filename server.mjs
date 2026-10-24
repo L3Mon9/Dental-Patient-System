@@ -15,6 +15,18 @@ CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user TEXT NOT NULL RE
 CREATE TABLE IF NOT EXISTS records(clinic TEXT PRIMARY KEY REFERENCES clinics(id),body TEXT NOT NULL DEFAULT '[]',revision INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY,clinic TEXT NOT NULL REFERENCES clinics(id),name TEXT NOT NULL,body BLOB NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor TEXT,event TEXT,clinic TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);`)
+if (process.argv.includes('--create-owner')) {
+ try {
+  const { setupOwner } = await import('./owner-setup.mjs')
+  await setupOwner(db)
+  db.close()
+  process.exit(0)
+ } catch (error) {
+  console.error(error.message)
+  db.close()
+  process.exit(1)
+ }
+}
 const uid=()=>randomBytes(16).toString('hex')
 const hash=p=>{const salt=uid();return salt+':'+scryptSync(p,salt,64).toString('hex')}
 const verify=(p,h)=>{const [salt,key]=h.split(':');return timingSafeEqual(scryptSync(p,salt,64),Buffer.from(key,'hex'))}
@@ -40,9 +52,8 @@ const server=createServer(async(req,res)=>{
    if(!sameOrigin && !allowedOrigins.has(origin.origin)) fail('Invalid request origin',403)
  }
  let body={};if(req.method!=='GET'&&path!=='/api/files'){if(!req.headers['content-type']?.startsWith('application/json'))fail('JSON content required',415);let size=0,chunks=[];for await(const chunk of req){size+=chunk.length;if(size>24*1024*1024)fail('Request too large',413);chunks.push(chunk)}try{body=JSON.parse(Buffer.concat(chunks).toString())}catch{fail('Invalid JSON')}}
- const setupNeeded=!db.prepare('SELECT id FROM users LIMIT 1').get()
- if(path==='/api/status'&&req.method==='GET')return send(200,{setupNeeded})
- if(path==='/api/setup'&&req.method==='POST'){if(!setupNeeded)fail('Owner is already configured',409);if(!email(body.email)||!password(body.password)||!body.name?.trim())fail('Enter a name, valid email, and password of 12–128 characters');const id=uid();db.prepare('INSERT INTO users(id,email,name,hash,role) VALUES(?,?,?,?,?)').run(id,body.email.toLowerCase().trim(),body.name.trim(),hash(body.password),'owner');audit(id,'owner.created');return send(201,{ok:true})}
+ if(path==='/api/status'&&req.method==='GET')return send(200,{ok:true})
+ if(path==='/api/setup')fail('Account registration is disabled. Contact your system administrator.',403)
  if(path==='/api/login'&&req.method==='POST'){const key=req.socket.remoteAddress;const attempt=attempts.get(key);if(attempt&&attempt.until>Date.now()&&attempt.count>=10)fail('Too many attempts. Try again in 15 minutes.',429);if(!attempt||attempt.until<Date.now())attempts.set(key,{count:0,until:Date.now()+900000});attempts.get(key).count++;if(typeof body.password!=='string'||body.password.length>128)fail('Invalid credentials',401);const u=db.prepare('SELECT * FROM users WHERE email=?').get(String(body.email).toLowerCase().trim());if(!u||!verify(body.password,u.hash))fail('Invalid email or password',401);if(u.clinic&&!db.prepare('SELECT active FROM clinics WHERE id=?').get(u.clinic)?.active)fail('Clinic access is suspended',403);attempts.delete(key);const token=randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(digest(token),u.id,Date.now()+8*3600000);res.setHeader('Set-Cookie',`dentelle=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.COOKIE_SECURE==='1'?'; Secure':''}`);audit(u.id,'login',u.clinic);return send(200,{user:publicUser(u)})}
  const token=(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('dentelle='))?.slice(9)
  const user=token?db.prepare('SELECT u.* FROM sessions s JOIN users u ON s.user=u.id WHERE s.token=? AND s.expires>?').get(digest(token),Date.now()):null

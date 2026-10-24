@@ -1,5 +1,5 @@
 ﻿import {chromium} from '@playwright/test'
-import {spawn} from 'node:child_process'
+import {spawn,spawnSync} from 'node:child_process'
 import {mkdtempSync,rmSync,mkdirSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -9,10 +9,16 @@ const dir=mkdtempSync(join(tmpdir(),'jhon-viewer-'));const server=spawn(process.
 try{
  await new Promise((resolve,reject)=>{server.stdout.once('data',resolve);server.once('exit',()=>reject(new Error('Server failed')));setTimeout(()=>reject(new Error('Timeout')),10000).unref()})
  if(process.env.TEST_DEV==='1'){devServer=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5188'],{env:{...process.env,DENTELLE_API_URL:'http://127.0.0.1:3098'},stdio:['ignore','pipe','pipe']});devServer.stderr.on('data',d=>console.log(String(d)));await new Promise(resolve=>devServer.stdout.on('data',d=>{if(String(d).includes('http://'))resolve()}))}
- browser=await chromium.launch({executablePath:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true,args:['--enable-webgl','--use-angle=swiftshader']})
+ browser=await chromium.launch({executablePath:process.env.TEST_BROWSER_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true,args:['--enable-webgl','--use-angle=swiftshader']})
  const context=await browser.newContext({viewport:{width:1440,height:1000}});const api=context.request;const base='http://127.0.0.1:3098'
  const post=async(path,data)=>{const r=await api.post(base+'/api/'+path,{data});assert.ok(r.ok(),await r.text());return r.json()}
- await post('setup',{name:'Owner',email:'owner@example.com',password:'Owner-Password-123'});await post('login',{email:'owner@example.com',password:'Owner-Password-123'});await post('clinics',{clinicName:'Jhon Dental Clinic',name:'Test Dentist',email:'dentist@example.com',password:'Temporary-Password-123'});await post('logout',{});await post('login',{email:'dentist@example.com',password:'Temporary-Password-123'});await post('password',{current:'Temporary-Password-123',password:'Permanent-Password-123'})
+ const loginPage=await context.newPage();await loginPage.goto(process.env.TEST_DEV==='1'?'http://127.0.0.1:5188':base)
+ await loginPage.getByRole('heading',{name:'Welcome back.'}).waitFor()
+ assert.equal(await loginPage.getByRole('button',{name:'Sign in →',exact:true}).count(),1)
+ assert.equal(await loginPage.getByLabel('Your name',{exact:true}).count(),0)
+ assert.equal(await loginPage.getByText('Create your owner account',{exact:true}).count(),0)
+ await loginPage.close()
+ const provision=spawnSync(process.execPath,['server.mjs','--create-owner','--stdin-json'],{env:{...process.env,DENTELLE_DATA_DIR:dir},input:JSON.stringify({name:'Owner',email:'owner@example.com',password:'Owner-Password-123'}),encoding:'utf8'});assert.equal(provision.status,0,provision.stderr);await post('login',{email:'owner@example.com',password:'Owner-Password-123'});await post('clinics',{clinicName:'Jhon Dental Clinic',name:'Test Dentist',email:'dentist@example.com',password:'Temporary-Password-123'});await post('logout',{});await post('login',{email:'dentist@example.com',password:'Temporary-Password-123'});await post('password',{current:'Temporary-Password-123',password:'Permanent-Password-123'})
  const upload=await api.post(base+'/api/files',{headers:{'Content-Type':'application/dicom','X-File-Name':'test.dcm'},data:syntheticDicom()});assert.equal(upload.status(),201);const file=await upload.json()
  const saved=await api.put(base+'/api/records',{data:{revision:0,patients:[{id:'p1',name:'Test Patient',phone:'',treatments:[],findings:{},images:[{id:'i1',fileId:file.id,name:'test.dcm',date:'2026-10-21',type:'DICOM study',dicom:{seriesUid:'1.2.826.0.1.100.2',frames:2,rows:32,columns:32,modality:'CT'}}]},{id:'p2',name:'Another Patient',phone:'09990000000',treatments:[],findings:{},images:[]}]}});assert.equal(saved.status(),200)
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('PAGE ERROR:',e.message)});page.on('console',m=>{if(m.type()==='error')console.log('BROWSER:',m.text())});await page.goto(process.env.TEST_DEV==='1'?'http://127.0.0.1:5188':base);await page.getByRole('heading',{name:'Patients',exact:true}).first().waitFor();

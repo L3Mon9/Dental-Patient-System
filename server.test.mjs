@@ -1,4 +1,4 @@
-﻿import { spawn } from 'node:child_process'
+﻿import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,13 +13,17 @@ try{
  await new Promise((resolve,reject)=>{proc.stdout.once('data',resolve);proc.once('exit',()=>reject(new Error(output)));setTimeout(()=>reject(new Error('Server timeout')),10000).unref()})
  assert.equal((await request('records')).status,401)
  const devResponse=await fetch(base+'setup',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://localhost:5173'},body:'{}'})
- assert.equal(devResponse.status,400,'Vite origin must reach setup validation')
+ assert.equal(devResponse.status,403,'Public registration must be disabled on an empty database')
  const rejected=await fetch(base+'setup',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:'{}'})
  assert.equal(rejected.status,403,'Untrusted origins must remain blocked')
  const malformed=await fetch(base+'setup',{method:'POST',headers:{'Content-Type':'application/json',Origin:'null'},body:'{}'})
  assert.equal(malformed.status,403,'Invalid origins must be rejected cleanly')
- assert.equal((await request('setup',{name:'Owner',email:'owner@example.com',password:'Owner-Password-123'})).status,201)
- assert.equal((await request('setup',{})).status,409)
+ assert.equal((await request('setup',{name:'Owner',email:'owner@example.com',password:'Owner-Password-123'})).status,403)
+ const provision = () => spawnSync(process.execPath,['server.mjs','--create-owner','--stdin-json'],{env:{...process.env,DENTELLE_DATA_DIR:dir},input:JSON.stringify({name:'Owner',email:'owner@example.com',password:'Owner-Password-123'}),encoding:'utf8'})
+ const created=provision();assert.equal(created.status,0,created.stderr)
+ assert.equal(provision().status,1,'Existing owner must not be overwritten')
+ assert.equal((await request('setup',{})).status,403)
+ assert.equal((await request('clinics',{clinicName:'Unauthorized'})).status,401)
  const owner=await request('login',{email:'owner@example.com',password:'Owner-Password-123'});assert.equal(owner.status,200)
  for(const n of [1,2])assert.equal((await request('clinics',{clinicName:`Clinic ${n}`,name:`Dentist ${n}`,email:`dentist${n}@example.com`,password:'Temporary-Password-123'},owner.cookie)).status,201)
  const d1=await request('login',{email:'dentist1@example.com',password:'Temporary-Password-123'})

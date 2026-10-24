@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server.mjs",
+    "owner:create": "node server.mjs --create-owner",
     "start": "node server.mjs"
   },
   "dependencies": {
